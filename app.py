@@ -8,12 +8,12 @@ import re
 st.set_page_config(page_title="GMC - Siscomex & Invoice Auditor", layout="wide")
 
 st.title("📊 GMC - Sistema de Auditoria e Consulta Siscomex")
-st.write("Versão 2.0 - Totalmente Corrigido e Otimizado")
+st.write("Versão 2.1 - Correção do Filtro de Busca")
 
 NOME_ARQUIVO_BANCO = "banco_siscomex.json"
 df_siscomex = None
 
-# FUNÇÃO AUXILIAR: Formata o NCM colado (ex: 85363090) para o padrão com pontos (8536.30.90)
+# FUNÇÃO AUXILIAR: Formata o NCM (ex: 85363090) para o padrão com pontos (8536.30.90)
 def formatar_ncm(ncm_sujo):
     ncm_limpo = re.sub(r'\D', '', str(ncm_sujo)) # Remove qualquer coisa que não seja número
     if len(ncm_limpo) == 8:
@@ -130,11 +130,12 @@ with aba_consulta:
         df_base_consulta = df_siscomex[df_siscomex['situacao'].isin(situacao_selecionada)]
         
         if termo_busca:
+            # CORREÇÃO CRÍTICA: Parênteses adicionados ao redor de cada condição de texto para evitar o erro de ambiguidade
             df_busca = df_base_consulta[
-                df_base_consulta['codigo'].str.contains(termo_busca, case=False, na=False) |
-                df_base_consulta['codigosInterno'].str.contains(termo_busca, case=False, na=False) |
-                df_base_consulta['descricao'].str.contains(termo_busca, case=False, na=False) |
-                df_base_consulta['ncm'].str.contains(termo_busca, case=False, na=False)
+                (df_base_consulta['codigo'].str.contains(termo_busca, case=False, na=False)) |
+                (df_base_consulta['codigosInterno'].str.contains(termo_busca, case=False, na=False)) |
+                (df_base_consulta['descricao'].str.contains(termo_busca, case=False, na=False)) |
+                (df_base_consulta['ncm'].str.contains(termo_busca, case=False, na=False))
             ]
             st.write(f"Resultados encontrados: {len(df_busca)}")
             st.dataframe(df_busca[['codigo', 'codigosInterno', 'ncm', 'descricao', 'situacao']], use_container_width=True)
