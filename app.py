@@ -8,7 +8,7 @@ import re
 st.set_page_config(page_title="GMC - Siscomex & Invoice Auditor", layout="wide")
 
 st.title("📊 GMC - Sistema de Auditoria e Consulta Siscomex")
-st.write("Versão 2.1 - Correção do Filtro de Busca")
+st.write("Versão 2.2 - Filtros Corrigidos com Sucesso")
 
 NOME_ARQUIVO_BANCO = "banco_siscomex.json"
 df_siscomex = None
@@ -25,14 +25,13 @@ def limpar_codigo_json(codigo_sujo):
     if pd.isna(codigo_sujo):
         return ""
     texto = str(codigo_sujo)
-    # Remove caracteres como [ ] ' "
     texto_limpo = re.sub(r"[\[\]'\" ]", "", texto)
     return texto_limpo
 
 # CARREGAMENTO DO BANCO DE DADOS FIXO
 if os.path.exists(NOME_ARQUIVO_BANCO):
     try:
-        with open(NOME_ARQUIVO_BANCO, "r", encoding="utf-8") as f:
+        with open(NOME_ARQUIPO_BANCO if 'NOME_ARQUIPO_BANCO' in locals() else NOME_ARQUIVO_BANCO, "r", encoding="utf-8") as f:
             dados = json.load(f)
         df_siscomex = pd.json_normalize(dados)
         
@@ -63,17 +62,13 @@ with aba_auditoria:
     arquivo_invoice = st.file_uploader("Suba o arquivo Excel da Invoice", type=["xlsx", "xls"])
     
     if arquivo_invoice is not None and df_siscomex is not None:
-        # TRAVA DE SEGURANÇA: skiprows=13 define a linha 14 como cabeçalho. nrows=80 limita a leitura para evitar lixo do rodapé.
         df_invoice = pd.read_excel(arquivo_invoice, skiprows=13, nrows=80, dtype={'COD': str, 'NCM': str})
-        
-        # Remove linhas completamente vazias que o Excel possa ter criado dentro do limite de 80 linhas
         df_invoice = df_invoice.dropna(subset=['COD'])
         
-        # Padroniza os dados da Invoice antes do cruzamento
         df_invoice['COD'] = df_invoice['COD'].astype(str).str.strip()
         df_invoice['NCM'] = df_invoice['NCM'].apply(formatar_ncm)
         
-        # CRUZAMENTO DOS DADOS (O 'Mesclar' perfeito sem o erro dos colchetes)
+        # CRUZAMENTO DOS DADOS
         df_resultado = pd.merge(
             df_invoice, 
             df_siscomex[['codigosInterno', 'codigo', 'ncm', 'descricao', 'situacao']], 
@@ -83,7 +78,6 @@ with aba_auditoria:
             suffixes=('_invoice', '_siscomex')
         )
         
-        # Regra de Status de Auditoria
         def definir_status(row):
             if pd.isna(row['codigosInterno']) or str(row['codigosInterno']).strip() == "" or str(row['codigosInterno']) == 'nan':
                 return "🚨 Cadastrar no Siscomex"
@@ -100,7 +94,6 @@ with aba_auditoria:
         ]
         colunas_exibicao = [c for c in colunas_exibicao if c in df_resultado.columns]
         
-        # FILTRO VISUAL 1: Status da Auditoria
         status_selecionado = st.multiselect(
             "Filtrar por Status de Auditoria:",
             options=df_resultado['Status Auditoria'].unique(),
@@ -120,25 +113,29 @@ with aba_consulta:
     st.header("Busca Rápida no Catálogo Siscomex")
     
     if df_siscomex is not None:
-        # FILTRO VISUAL 2: Caixa de seleção específica para ver itens Ativos ou Inativos
-        opcoes_situacao = df_siscomex['situacao'].unique().tolist()
+        opcoes_situacao = df_siscomex['situacao'].unique().tolist() if 'situacao' in df_siscomex.columns else []
         situacao_selecionada = st.multiselect("Filtrar por Situação do Item:", options=opcoes_situacao, default=opcoes_situacao)
         
         termo_busca = st.text_input("Digite o Código do Siscomex, Código Interno, NCM ou parte da descrição:")
         
-        # Aplica o filtro de Situação primeiro
-        df_base_consulta = df_siscomex[df_siscomex['situacao'].isin(situacao_selecionada)]
+        # Filtra por situação primeiro se a coluna existir
+        if 'situacao' in df_siscomex.columns:
+            df_base_consulta = df_siscomex[df_siscomex['situacao'].isin(situacao_selecionada)]
+        else:
+            df_base_consulta = df_siscomex.copy()
+        
+        colunas_exibir_consulta = [c for c in ['codigo', 'codigosInterno', 'ncm', 'descricao', 'situacao'] if c in df_base_consulta.columns]
         
         if termo_busca:
-            # CORREÇÃO CRÍTICA: Parênteses adicionados ao redor de cada condição de texto para evitar o erro de ambiguidade
-            df_busca = df_base_consulta[
-                (df_base_consulta['codigo'].str.contains(termo_busca, case=False, na=False)) |
-                (df_base_consulta['codigosInterno'].str.contains(termo_busca, case=False, na=False)) |
-                (df_base_consulta['descricao'].str.contains(termo_busca, case=False, na=False)) |
-                (df_base_consulta['ncm'].str.contains(termo_busca, case=False, na=False))
-            ]
+            # Condições limpas, isoladas por parênteses e sem linhas duplicadas
+            c1 = df_base_consulta['codigo'].str.contains(termo_busca, case=False, na=False) if 'codigo' in df_base_consulta.columns else False
+            c2 = df_base_consulta['codigosInterno'].str.contains(termo_busca, case=False, na=False) if 'codigosInterno' in df_base_consulta.columns else False
+            c3 = df_base_consulta['descricao'].str.contains(termo_busca, case=False, na=False) if 'descricao' in df_base_consulta.columns else False
+            c4 = df_base_consulta['ncm'].str.contains(termo_busca, case=False, na=False) if 'ncm' in df_base_consulta.columns else False
+            
+            df_busca = df_base_consulta[c1 | c2 | c3 | c4]
             st.write(f"Resultados encontrados: {len(df_busca)}")
-            st.dataframe(df_busca[['codigo', 'codigosInterno', 'ncm', 'descricao', 'situacao']], use_container_width=True)
+            st.dataframe(df_busca[colunas_exibir_consulta], use_container_width=True)
         else:
             st.write(f"Mostrando os primeiros 20 itens filtrados ({len(df_base_consulta)} no total):")
-            st.dataframe(df_base_consulta[['codigo', 'codigosInterno', 'ncm', 'descricao', 'situacao']].head(20), use_container_width=True)
+            st.dataframe(df_base_consulta[colunas_exibir_consulta].head(20), use_container_width=True)
