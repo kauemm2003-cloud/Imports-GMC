@@ -35,47 +35,51 @@ if os.path.exists(NOME_ARQUIVO_BANCO):
     try:
         with open(NOME_ARQUIVO_BANCO, "r", encoding="utf-8") as f:
             dados = json.load(f)
-        
+
+        # Suporte a JSON que seja dict com lista dentro OU array direto na raiz
         if isinstance(dados, dict):
             for chave in ['dados', 'itens', 'resultado', 'data']:
                 if chave in dados and isinstance(dados[chave], list):
                     dados = dados[chave]
                     break
-        
-        df_bruto = pd.DataFrame(dados)
-        colunas_necessarias = {}
-        
-        for col in df_bruto.columns:
-            col_lower = col.lower()
-            if 'codigosinterno' in col_lower or 'codigointerno' in col_lower:
-                colunas_necessarias['codigosInterno'] = col
-            elif 'codigo' in col_lower and 'interno' not in col_lower:
-                colunas_necessarias['codigo'] = col
-            elif 'ncm' in col_lower:
-                colunas_necessarias['ncm'] = col
-            elif 'descricao' in col_lower or 'product' in col_lower:
-                colunas_necessarias['descricao'] = col
-            elif 'situacao' in col_lower or 'status' in col_lower:
-                colunas_necessarias['situacao'] = col
 
-        if colunas_necessarias:
-            df_limpo = pd.DataFrame()
-            if 'codigosInterno' in colunas_necessarias:
-                df_limpo['codigosInterno'] = df_bruto[colunas_necessarias['codigosInterno']].apply(limpar_campo_complexo)
-            if 'codigo' in colunas_necessarias:
-                df_limpo['codigo'] = df_bruto[colunas_necessarias['codigo']].apply(limpar_campo_complexo).str.zfill(10)
-            if 'ncm' in colunas_necessarias:
-                df_limpo['ncm'] = df_bruto[colunas_necessarias['ncm']].apply(limpar_campo_complexo).apply(formatar_ncm)
-            if 'descricao' in colunas_necessarias:
-                df_limpo['descricao'] = df_bruto[colunas_necessarias['descricao']].astype(str).str.strip()
-            if 'situacao' in colunas_necessarias:
-                df_limpo['situacao'] = df_bruto[colunas_necessarias['situacao']].astype(str).str.strip()
-            
+        df_bruto = pd.DataFrame(dados)
+        df_limpo = pd.DataFrame()
+
+        # codigosInterno: vem como lista ['IP.XXX'] no JSON — extrai o primeiro elemento
+        if 'codigosInterno' in df_bruto.columns:
+            def extrair_codigo_interno(val):
+                if isinstance(val, list):
+                    return str(val[0]).strip() if len(val) > 0 else ""
+                if val is None or (isinstance(val, float) and pd.isna(val)):
+                    return ""
+                return str(val).strip()
+            df_limpo['codigosInterno'] = df_bruto['codigosInterno'].apply(extrair_codigo_interno)
+
+        # codigo: vem como inteiro no JSON — converte para string com zeros à esquerda
+        if 'codigo' in df_bruto.columns:
+            df_limpo['codigo'] = df_bruto['codigo'].apply(
+                lambda v: "" if v is None else str(int(v)).zfill(10)
+            )
+
+        # ncm: string simples
+        if 'ncm' in df_bruto.columns:
+            df_limpo['ncm'] = df_bruto['ncm'].astype(str).str.strip().apply(formatar_ncm)
+
+        # descricao
+        if 'descricao' in df_bruto.columns:
+            df_limpo['descricao'] = df_bruto['descricao'].astype(str).str.strip()
+
+        # situacao
+        if 'situacao' in df_bruto.columns:
+            df_limpo['situacao'] = df_bruto['situacao'].astype(str).str.strip()
+
+        if not df_limpo.empty:
             df_siscomex = df_limpo
             st.sidebar.success("✅ Banco Siscomex carregado e tratado com sucesso!")
         else:
             st.sidebar.error("❌ Não foram encontradas as colunas necessárias no JSON.")
-            
+
     except Exception as e:
         st.sidebar.error(f"Erro ao processar o banco de dados: {e}")
 else:
