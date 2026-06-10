@@ -143,12 +143,21 @@ with aba_consulta:
         colunas_exibir_consulta = [c for c in ['codigo', 'codigosInterno', 'ncm', 'descricao', 'situacao'] if c in df_base_consulta.columns]
         
         if termo_busca:
-            c1 = df_base_consulta['codigo'].str.contains(termo_busca, case=False, na=False) if 'codigo' in df_base_consulta.columns else False
-            c2 = df_base_consulta['codigosInterno'].str.contains(termo_busca, case=False, na=False) if 'codigosInterno' in df_base_consulta.columns else False
-            c3 = df_base_consulta['descricao'].str.contains(termo_busca, case=False, na=False) if 'descricao' in df_base_consulta.columns else False
-            c4 = df_base_consulta['ncm'].str.contains(termo_busca, case=False, na=False) if 'ncm' in df_base_consulta.columns else False
-            
-            df_busca = df_base_consulta[c1 | c2 | c3 | c4]
+            # CORREÇÃO: inicia máscara como Series booleana False com o índice correto
+            # e acumula apenas as colunas existentes com |=
+            # Evita mistura de escalar False com Series que causava o erro de ambiguidade
+            mascara = pd.Series(False, index=df_base_consulta.index)
+
+            if 'codigo' in df_base_consulta.columns:
+                mascara |= df_base_consulta['codigo'].str.contains(termo_busca, case=False, na=False)
+            if 'codigosInterno' in df_base_consulta.columns:
+                mascara |= df_base_consulta['codigosInterno'].str.contains(termo_busca, case=False, na=False)
+            if 'descricao' in df_base_consulta.columns:
+                mascara |= df_base_consulta['descricao'].str.contains(termo_busca, case=False, na=False)
+            if 'ncm' in df_base_consulta.columns:
+                mascara |= df_base_consulta['ncm'].str.contains(termo_busca, case=False, na=False)
+
+            df_busca = df_base_consulta[mascara]
             st.write(f"Resultados encontrados: {len(df_busca)}")
             st.dataframe(df_busca[colunas_exibir_consulta], use_container_width=True)
         else:
