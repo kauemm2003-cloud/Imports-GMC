@@ -8,7 +8,7 @@ import re
 st.set_page_config(page_title="GMC - Siscomex & Invoice Auditor", layout="wide")
 
 st.title("📊 GMC - Sistema de Auditoria e Consulta Siscomex")
-st.write("Versão 3.1 - Bug de Digitação Corrigido")
+st.write("Versão 3.2 - Proteção Antifalhas de Cópia Ativada")
 
 NOME_ARQUIVO_BANCO = "banco_siscomex.json"
 df_siscomex = None
@@ -24,15 +24,11 @@ def formatar_ncm(ncm_sujo):
 def limpar_campo_complexo(valor):
     if pd.isna(valor):
         return ""
-    # Se o valor veio como uma lista do JSON (ex: ['IP.FN2090606']), pega o primeiro item
     if isinstance(valor, list):
-        if len(valor) > 0:
-            valor = valor[0]
-        else:
-            return ""
+        if len(valor) > 0: valor = valor[0]
+        else: return ""
     texto = str(valor)
-    texto_limpo = re.sub(r"[\[\]'\" ]", "", texto)
-    return texto_limpo
+    return re.sub(r"[\[\]'\" ]", "", texto)
 
 # CARREGAMENTO DO BANCO DE DADOS FIXO COM TRATAMENTO SEGURO
 if os.path.exists(NOME_ARQUIVO_BANCO):
@@ -40,22 +36,19 @@ if os.path.exists(NOME_ARQUIVO_BANCO):
         with open(NOME_ARQUIVO_BANCO, "r", encoding="utf-8") as f:
             dados = json.load(f)
         
-        # Se os dados vierem envelopados em uma chave do portal, tentamos extrair a lista
         if isinstance(dados, dict):
             for chave in ['dados', 'itens', 'resultado', 'data']:
                 if chave in dados and isinstance(dados[chave], list):
                     dados = dados[chave]
                     break
         
-        # Cria o DataFrame bruto
         df_bruto = pd.DataFrame(dados)
-        
-        # MAPEAMENTO DAS COLUNAS REAIS 
         colunas_necessarias = {}
+        
         for col in df_bruto.columns:
             col_lower = col.lower()
             if 'codigosinterno' in col_lower or 'codigointerno' in col_lower:
-                colunas_necessarias['codigosInterno'] = col # ERRO CORRIGIDO AQUI
+                colunas_necessarias['codigosInterno'] = col
             elif 'codigo' in col_lower and 'interno' not in col_lower:
                 colunas_necessarias['codigo'] = col
             elif 'ncm' in col_lower:
@@ -65,7 +58,6 @@ if os.path.exists(NOME_ARQUIVO_BANCO):
             elif 'situacao' in col_lower or 'status' in col_lower:
                 colunas_necessarias['situacao'] = col
 
-        # Se encontrou as colunas, monta a tabela limpa
         if colunas_necessarias:
             df_limpo = pd.DataFrame()
             if 'codigosInterno' in colunas_necessarias:
@@ -82,7 +74,7 @@ if os.path.exists(NOME_ARQUIVO_BANCO):
             df_siscomex = df_limpo
             st.sidebar.success("✅ Banco Siscomex carregado e tratado com sucesso!")
         else:
-            st.sidebar.error("❌ Não foram encontradas as colunas de Código ou NCM no JSON.")
+            st.sidebar.error("❌ Não foram encontradas as colunas necessárias no JSON.")
             
     except Exception as e:
         st.sidebar.error(f"Erro ao processar o banco de dados: {e}")
@@ -108,14 +100,57 @@ with aba_auditoria:
         df_invoice['COD'] = df_invoice['COD'].astype(str).str.strip()
         df_invoice['NCM'] = df_invoice['NCM'].apply(formatar_ncm)
         
-        # CRUZAMENTO DOS DADOS 
-        df_resultado = pd.merge(
-            df_invoice, 
-            df_siscomex[['codigosInterno', 'codigo', 'ncm', 'descricao', 'situacao']], 
-            left_on='COD', 
-            right_on='codigosInterno', 
-            how='left',
-            suffixes=('_invoice', '_siscomex')
-        )
+        # LINHA BLINDADA: Tudo em uma única linha para evitar erros de parênteses na cópia
+        df_resultado = pd.merge(df_invoice, df_siscomex[['codigosInterno', 'codigo', 'ncm', 'descricao', 'situacao']], left_on='COD', right_on='codigosInterno', how='left', suffixes=('_invoice', '_siscomex'))
         
-        def definir_status(
+        def definir_status(row):
+            if pd.isna(row['codigosInterno']) or str(row['codigosInterno']).strip() == "" or str(row['codigosInterno']) == 'nan':
+                return "🚨 Cadastrar no Siscomex"
+            elif row['NCM'] != row['ncm']:
+                return "⚠️ Divergência de NCM"
+            else:
+                return "✅ Tudo Certo"
+                
+        df_resultado['Status Auditoria'] = df_resultado.apply(definir_status, axis=1)
+        
+        colunas_exibicao = [c for c in ['ITEM', 'COD', 'NCM', 'PRODUCT DESCRIPTION', 'QTY', 'codigo', 'ncm', 'Status Auditoria'] if c in df_resultado.columns]
+        
+        status_selecionado = st.multiselect("Filtrar por Status de Auditoria:", options=df_resultado['Status Auditoria'].unique(), default=df_resultado['Status Auditoria'].unique())
+        
+        df_filtrado = df_resultado[df_resultado['Status Auditoria'].isin(status_selecionado)]
+        st.dataframe(df_filtrado[colunas_exibicao], use_container_width=True)
+        
+    elif df_siscomex is None:
+        st.info("Aguardando o arquivo de banco de dados no GitHub para habilitar a auditoria.")
+
+# -------------------------------------------------------------------------
+# ABA 2: INTERFACE DE CONSULTA
+# -------------------------------------------------------------------------
+with aba_consulta:
+    st.header("Busca Rápida no Catálogo Siscomex")
+    
+    if df_siscomex is not None:
+        opcoes_situacao = df_siscomex['situacao'].unique().tolist() if 'situacao' in df_siscomex.columns else []
+        situacao_selecionada = st.multiselect("Filtrar por Situação do Item:", options=opcoes_situacao, default=opcoes_situacao)
+        
+        termo_busca = st.text_input("Digite o Código do Siscomex, Código Interno, NCM ou parte da descrição:")
+        
+        if 'situacao' in df_siscomex.columns:
+            df_base_consulta = df_siscomex[df_siscomex['situacao'].isin(situacao_selecionada)]
+        else:
+            df_base_consulta = df_siscomex.copy()
+        
+        colunas_exibir_consulta = [c for c in ['codigo', 'codigosInterno', 'ncm', 'descricao', 'situacao'] if c in df_base_consulta.columns]
+        
+        if termo_busca:
+            c1 = df_base_consulta['codigo'].str.contains(termo_busca, case=False, na=False) if 'codigo' in df_base_consulta.columns else False
+            c2 = df_base_consulta['codigosInterno'].str.contains(termo_busca, case=False, na=False) if 'codigosInterno' in df_base_consulta.columns else False
+            c3 = df_base_consulta['descricao'].str.contains(termo_busca, case=False, na=False) if 'descricao' in df_base_consulta.columns else False
+            c4 = df_base_consulta['ncm'].str.contains(termo_busca, case=False, na=False) if 'ncm' in df_base_consulta.columns else False
+            
+            df_busca = df_base_consulta[c1 | c2 | c3 | c4]
+            st.write(f"Resultados encontrados: {len(df_busca)}")
+            st.dataframe(df_busca[colunas_exibir_consulta], use_container_width=True)
+        else:
+            st.write(f"Mostrando os primeiros 20 itens filtrados ({len(df_base_consulta)} no total):")
+            st.dataframe(df_base_consulta[colunas_exibir_consulta].head(20), use_container_width=True)
